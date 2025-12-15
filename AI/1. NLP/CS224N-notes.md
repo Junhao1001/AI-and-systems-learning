@@ -45,6 +45,7 @@
   ![image-20251215154851776](./images/CS224N-notes/image-20251215154851776.png)
 
 - **Likelihood:**
+
 $$
 \text{Likelihood}=L(\theta)=\prod_{t=1}^T\prod_{-m\leq j\leq m}P\left(w_{t+j}\mid w_t;\theta\right)
 $$
@@ -57,16 +58,17 @@ $$
   - the **average negative log likelihood**
   - Maximizing predictive accuracy -> **Minimizing objective function** 
 
-  $$
-  J(\theta)=-\frac{1}{T}\log L(\theta)=-\frac{1}{T}\sum_{t=1}^T\sum_{-m\leq j\leq m}\log P(w_{t+j}|w_t;\theta)
-  $$
+$$
+J(\theta)=-\frac{1}{T}\log L(\theta)=-\frac{1}{T}\sum_{t=1}^T\sum_{-m\leq j\leq m}\log P(w_{t+j}|w_t;\theta)
+$$
 
 ### Prediction Function
 
 - mathematical expression **(use softmax function)**:
-  $$
-  P(o|c)=\frac{\exp(u_o^Tv_c)}{\sum_{w\in V}\exp(u_w^Tv_c)}
-  $$
+
+$$
+P(o|c)=\frac{\exp(u_o^Tv_c)}{\sum_{w\in V}\exp(u_w^Tv_c)}
+$$
 
   - $v_c$ is a center word; or input vector
   - $u_o$ is a context word; or output vector
@@ -77,32 +79,35 @@ $$
 ### Optimization
 
 - Use **gradient descent** to optimize the loss function $J(\theta)$
-  $$
-  \theta^{(t+1)}=\theta^{(t)}-\eta\nabla_\theta J(\theta)
-  $$
-  
+
+$$
+\theta^{(t+1)}=\theta^{(t)}-\eta\nabla_\theta J(\theta)
+$$
+
   - we want to **minimize the $J(\theta)$ here, so use minus**
   
 - Simply put, make **the partial derivative** of the corresponding parameter **0**
 
 - For center word vectors $v_c$
-  $$
-  \nabla_{v_c}J=u_o-\sum_{w\in V}P(w\mid c)u_w
-  $$
+
+$$
+\nabla_{v_c}J=u_o-\sum_{w\in V}P(w\mid c)u_w
+$$
 
   - In practice, training uses the sum of the gradients over the context window
 
 - For context word vectors $u_o$
-  $$
-  \nabla_{u_o}J=v_c(1-P(o\mid c))
-  $$
+
+$$
+\nabla_{u_o}J=v_c(1-P(o\mid c))
+$$
 
 - For other word vectors $u_w$
-  $$
-  \nabla_{u_w}J=-P(w\mid c)v_c
-  $$
 
-- 
+$$
+\nabla_{u_w}J=-P(w\mid c)v_c
+$$
+
 
 - **Stochastic gradient descent**:
   - Use SGD to reduce computation cost
@@ -118,13 +123,14 @@ $$
   - Instead: **"Given a pair (c, w), is it a real context pair, or random noise"**
 
 - **Core formula**：
-  $$
-  J=-\log\sigma(u_o^\top v_c)-\sum_{i=1}^k\log\sigma(-u_{n_i}^\top v_c).
-  $$
 
-  - $\sigma(x)=\frac{1}{1+e^{-x}}$, map the real value to 0~1
-  - Positive sample： $u_o^\top v_c\gg0$
-  - Negative sample:  $u_{n_i}^\top v_c\ll0$
+$$
+J=-\log\sigma(u_o^\top v_c)-\sum_{i=1}^k\log\sigma(-u_{n_i}^\top v_c).
+$$
+
+  - \(\sigma(x)=\frac{1}{1+e^{-x}}\), map the real value to 0~1
+  - Positive sample： \(u_o^\top v_c\gg0\)
+  - Negative sample:  \(u_{n_i}^\top v_c\ll0\)
 
 - The negative samples are from noise distribution: $\mathrm{P}(w)=\mathrm{U}(w)^{3/4}/\mathrm{Z}$
   - **The power 3/4 makes less frequent words be sampled a bit more often**
@@ -134,16 +140,10 @@ $$
 ### Co-occurrence vector
 
 - Every word w corresponds to a V dimension vector (V is the size of vocabulary)：
-  $$
-  \mathbf{x}_w
-  =
-  \big(
-  \#(w,c_1),\;
-  \#(w,c_2),\;
-  \dots,\;
-  \#(w,c_{|V|})
-  \big)
-  $$
+
+$$
+\mathbf{x}_w=\big(\#(w,c_1),\;  \#(w,c_2),\;  \dots,\;  \#(w,c_{|V|})  \big)
+$$
 
   - **#(w, c) is the number of times the word c appears in the context of w**
 
@@ -161,8 +161,9 @@ $$
 ### GloVe
 
 - **Core: The inner product of word vectors should be approximately equal to the logarithm of the number of co-occurrences of the word and context**
+
 $$
-  w_i^⊤w_j≈logX_{ij}
+w_i^⊤w_j≈logX_{ij}
 $$
 
   - $X_{ij}$：the number of co-occurrences of the word i and context word j
@@ -170,22 +171,17 @@ $$
   - $\tilde{\mathbf{w}}_j$：context word vector
 
 - Loss Function:
+
 $$
-  J=\sum_{i,j=1}^Vf\left(X_{ij}\right)\left(w_i^T\tilde{w}_j+b_i+\tilde{b}_j-\log X_{ij}\right)^2
+J=\sum_{i,j=1}^Vf\left(X_{ij}\right)\left(w_i^T\tilde{w}_j+b_i+\tilde{b}_j-\log X_{ij}\right)^2
 $$
 
   - $b_i,b_j$: bias
 
   - \(f(x)\): **weight function**
+
 $$
-    \boxed{
-    f(x)
-    =
-    \begin{cases}
-    \left(\frac{x}{x_{\max}}\right)^\alpha & x < x_{\max} \\
-    1 & \text{otherwise}
-    \end{cases}
-    }
+\boxed{f(x)= \begin{cases}\left(\frac{x}{x_{\max}}\right)^\alpha & x < x_{\max} \\    1 & \text{otherwise}    \end{cases}}
 $$
 
 
@@ -221,5 +217,3 @@ $$
 ## Others
 
 - **High-dimensional behavior:** word vectors are always represented in high-dimensional space. In high-dimensional space, **things can be very close to different things on different dimension**. For example, the word embeddings of "star" can be similar to astronomical words like "nebula". And **simultaneously**, it'll be close to words like "celebrity".
-
-  
