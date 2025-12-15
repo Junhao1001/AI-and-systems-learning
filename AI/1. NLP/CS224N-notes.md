@@ -45,9 +45,9 @@
   ![image-20251215154851776](./images/CS224N-notes/image-20251215154851776.png)
 
 - **Likelihood:**
-  $$
-  \text{Likelihood}=L(\theta)=\prod_{t=1}^T\prod_{-m\leq j\leq m}P\left(w_{t+j}\mid w_t;\theta\right)
-  $$
+$$
+\text{Likelihood}=L(\theta)=\prod_{t=1}^T\prod_{-m\leq j\leq m}P\left(w_{t+j}\mid w_t;\theta\right)
+$$
 
   - $\theta$ is **variables to be optimized**; actually is **all word vectors** here ($\theta\in R^{2dV}$).
   - m is the window size
@@ -55,7 +55,7 @@
 - **Objective function $J(\theta)$**:
 
   - the **average negative log likelihood**
-  - Maximizing predictive accuracy -> **Minimizing objective function**
+  - Maximizing predictive accuracy -> **Minimizing objective function** 
 
   $$
   J(\theta)=-\frac{1}{T}\log L(\theta)=-\frac{1}{T}\sum_{t=1}^T\sum_{-m\leq j\leq m}\log P(w_{t+j}|w_t;\theta)
@@ -161,23 +161,23 @@
 ### GloVe
 
 - **Core: The inner product of word vectors should be approximately equal to the logarithm of the number of co-occurrences of the word and context**
-  $$
+$$
   w_i^⊤w_j≈logX_{ij}
-  $$
+$$
 
   - $X_{ij}$：the number of co-occurrences of the word i and context word j
   - $\mathbf{w}_i$：center word vector
   - $\tilde{\mathbf{w}}_j$：context word vector
 
 - Loss Function:
-  $$
+$$
   J=\sum_{i,j=1}^Vf\left(X_{ij}\right)\left(w_i^T\tilde{w}_j+b_i+\tilde{b}_j-\log X_{ij}\right)^2
-  $$
+$$
 
   - $b_i,b_j$: bias
 
-  - $f(x)$: **weight function**
-    $$
+  - \(f(x)\): **weight function**
+$$
     \boxed{
     f(x)
     =
@@ -186,10 +186,11 @@
     1 & \text{otherwise}
     \end{cases}
     }
-    $$
+$$
 
-    - large weight for small cooccurrence; small weight for large cooccurrence
-    - Similar to 3/4 power in Negative Sampling
+
+  - large weight for small cooccurrence; small weight for large cooccurrence
+  - Similar to 3/4 power in Negative Sampling
 
 ## Evaluation of word vectors
 
@@ -198,10 +199,12 @@
 - **Word Vector Analogies:** Evaluate the word vectors on intuitive semantic and syntactic analogy questions
 
   - 
-    $$
-    d=\arg\max_i\frac{\left(x_b-x_a+x_c\right)^Tx_i}{||x_b-x_a+x_c||}
-    $$
-    <img src="./images/CS224N-notes/image-20251215211625390.png" alt="image-20251215211625390" style="zoom:80%;" />
+$$
+d=\arg\max_i\frac{\left(x_b-x_a+x_c\right)^Tx_i}{||x_b-x_a+x_c||}
+$$
+
+
+<img src="./images/CS224N-notes/image-20251215211625390.png" alt="image-20251215211625390" style="zoom:80%;" />
 
 - Meaning similarity/correlation evaluation
 - Fast to compute
