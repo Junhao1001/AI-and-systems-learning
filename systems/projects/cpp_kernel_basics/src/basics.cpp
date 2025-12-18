@@ -26,8 +26,17 @@ void const_ref_ptr_demo() {
 
     ref += 1;
     *ptr += 1;
+    
+    /* mistake
+    cref += 1;
+    */
 
     std::cout << "x      = " << x << "\n";
     std::cout << "ref    = " << ref << "\n";
     std::cout << "cref   = " << cref << "\n";
+
+    std::cout << "&x     =" << &x << "\n";
+    std::cout << "&ref   =" << &ref << "\n";
+
+
 }
