@@ -170,3 +170,148 @@ $$
 - 不剪单个权重，而剪**整个神经元、通道或注意力头**
 - 优点：推理加速明显
 - 缺点：对性能影响较大，需要精细调节
+
+
+
+### LoRA (Low-Rank Adaptation)
+
+#### 原理：
+
+微调一个线性层：
+$$
+y = W x
+$$
+
+- 全量微调：更新整个 $W$
+- **LoRA**：认为“任务差异只需要一个低秩的增量”
+
+于是改成：
+$$
+y = (W + \Delta W) x
+$$
+并且 **强约束**：
+$$
+\Delta W = B A,\quad A \in \mathbb{R}^{r \times d},\; B \in \mathbb{R}^{d' \times r},\; r \ll d
+$$
+**只训练 A、B，冻结 W**
+
+#### 初始化：
+
+- A 随机初始化
+  - 标准正态分布
+  - Xavier / Kaiming （用在FFN层，希望与原线性层尺度匹配）
+
+- $B$ 初始化为 0
+
+#### 常见注入点：
+
+- Attention 层
+  - $W_q, W_k, W_v, W_o$
+
+- FFN 层
+  - $W_{up}, W_{down}$
+
+- 经验规律：
+
+  - **Attention LoRA → 更偏任务行为 / 对齐**
+
+  - **FFN LoRA → 更偏知识 / 表达能力**
+
+#### LoRA和Adapter的区别
+
+- 经典 Adapter： 是一个**显式插入的网络模块**；改变了 forward graph，有非线性
+- LoRA：**不插新层**，不改变原 forward 结构，是对原权重的“参数化重写”
+- LoRA 在 PEFT 的**抽象层面上可以被视为一种 Adapter**，因为它通过引入少量可训练参数来适配冻结的主干模型
+
+QLoRA：冻结的低比特量化主干模型（通常 4-bit） + 全精度 LoRA 微调 (后续学习Quantization)
+
+
+
+### Prex-Tuning
+
+核心思想：冻结模型参数，仅在每一层 Transformer 的 attention 中，**引入一小段可训练的“前缀向量（prefix）**”
+
+标准 attention：
+$$
+\text{Attn}(Q, K, V) = \text{softmax}\left(\frac{QK^\top}{\sqrt{d}}\right)V
+$$
+在 每一层 attention 中，拼接一段**可训练的前缀 key / value**：
+$$
+K' = [K_{\text{prefix}}; K_{\text{input}}], \quad
+V' = [V_{\text{prefix}}; V_{\text{input}}]
+$$
+
+- prefix 不来自输入 token
+- 是 **直接学习的连续向量**
+- 通常 **只作用在 K / V，不作用在 Q**
+
+#### 和Adapter的区别
+
+- Adapter、LoRA、Prefix 是同一“位置”的不同实现选择 它们都发生在 SFT / task adaptation 阶段
+
+| 能力类型   | Adapter | Prefix   |
+| ---------- | ------- | -------- |
+| 行为对齐   | 中      | **强**   |
+| 风格控制   | 中      | **很强** |
+| 新知识注入 | **强**  | 弱       |
+| 推理稳定性 | 高      | 较低     |
+
+#### Others
+
+- 因为 K / V 决定“能被关注什么”，而 Q 决定“我在找什么”；
+  - Prefix 的目标是提供“可被模型检索的上下文记忆”，而不是改变输入 token 本身的语义
+- Prefix-Tuning 本质上就是：**在 self-attention 中人为制造一个“可控的 cross-attention memory**
+
+### Prompt Tuning
+
+- prompt 从**离散 token**变成**连续向量**：
+
+  ```
+  [p1, p2, p3, ..., pk, x1, x2, ..., xn]
+  ```
+
+- 其中：
+
+  - `pi`：**可学习的向量**
+  - `xi`：真实输入 token embedding
+  - **模型参数完全冻结**
+
+- Prompt Tuning 就是：**学习这组 pi**
+
+推理阶段：
+
+- Prompt embedding 会作为 **上下文条件**，通过 self-attention 影响后续 token 的隐藏状态
+
+- 输入文本：
+
+  ```
+  x = "Translate this sentence into French"
+  ```
+
+- 经过 tokenizer：
+
+  ```
+  [x1, x2, ..., xn]
+  ```
+
+- 查 embedding 表：
+  $$
+  E(x) = [e_1, e_2, ..., e_n], \quad e_i \in \mathbb{R}^d
+  $$
+
+- 拼接 Prompt + Input Embeddings（关键一步）
+
+  ```
+  [ p1, p2, ..., pm, e1, e2, ..., en ]
+  ```
+
+- 也就是：
+  $$
+  E'(x) = [P ; E(x)] \in \mathbb{R}^{(m+n)\times d}
+  $$
+
+- **没有新增 token，没有 tokenizer 变化**；prompt 不对应任何“真实词”
+
+- 模型**不会区分**哪些 embedding 来自 prompt，哪些来自输入
+
+  

@@ -192,6 +192,56 @@ $$
 
 - Maybe try to derivate the BPTT of LSTM ?
 
+### GRU (Gated Recurrent Unit)
+
+GRU 只有 **两个门**，并且**没有独立的 cell state**：
+
+| 名称   | 符号  | 作用                 |
+| ------ | ----- | -------------------- |
+| 更新门 | $z_t$ | 决定“保留多少旧状态” |
+| 重置门 | $r_t$ | 决定“用不用过去信息” |
+
+![image-20251223160022812](./images/notes4-RNN/image-20251223160022812.png)
+
+- **Update Gate**:
+
+$$
+z_t = \sigma(W_z x_t + U_z h_{t-1} + b_z)
+$$
+
+  - 类似 LSTM 的 **forget + input 的合体**
+
+- Reset Gate
+
+$$
+r_t = \sigma(W_r x_t + U_r h_{t-1} + b_r)
+$$
+
+- 控制在计算新候选状态时，是否“忘掉过去” 
+- 候选隐藏状态
+
+$$
+\tilde{h}_t
+= \tanh(W_h x_t + U_h (r_t \odot h_{t-1}) + b_h)
+$$
+
+- **最终隐藏状态（关键）**
+
+$$
+h_t = (1 - z_t) \odot h_{t-1}
++ z_t \odot \tilde{h}_t
+$$
+
+和LSTM的区别：
+
+- GRU 是“砍掉 cell state、合并门控”的 LSTM 简化版，用更低的复杂度保留了长期记忆能力
+
+- 数据量小 / 模型轻量化 → **GRU**
+
+- 序列极长 / 任务复杂 → **LSTM**
+
+
+
 ### Other methods
 
 #### ResNet (simple)
