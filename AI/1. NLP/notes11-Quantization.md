@@ -129,3 +129,137 @@ $$
 - 满足需求才能部署
 
 **Quantization 是一种推理阶段的数值近似技术，其目标是在不改变模型计算语义的前提下，通过低精度表示与 scale 机制，尽量还原原始 FP 模型的推理结果**
+
+
+
+
+
+
+
+# Distillation
+
+概括：用一个**大模型（Teacher）** 的行为，来训练一个**小模型（Student）**， 让 Student 在**参数量更小、计算更快**的情况下，尽量接近 Teacher 的性能
+
+Distillation 的目标：
+
+- **性能 **：小模型学到大模型的泛化能力
+- **成本 **：推理快、内存小
+- **部署友好**：适合移动端、边缘设备
+
+## 流程位置
+
+在LLM中，Distiallation Stage往往**不是一个单独的stage**; 而是融入到：
+
+- SFT数据构造
+- 监督信号设计
+- 目标函数中
+
+```
+(1) Pre-training
+     ↓
+(2) Post-training
+     ├─ SFT（Instruction / Chat）
+     ├─ Preference Alignment（RLHF / DPO / IPO）
+     └─ Distillation（数据 / 行为层面）
+     ↓
+(3) Compression & Deployment
+     ├─ Quantization
+     ├─ Pruning
+     └─ Compiler / Kernel
+```
+
+## 训练方式
+
+1. Teacher先进行训练：
+   - 大模型、性能强、不更新参数
+2. Student 学 Teacher
+
+$$
+\mathcal{L} = \alpha \cdot \mathcal{L}_{KD} + (1-\alpha) \cdot \mathcal{L}_{CE}
+$$
+
+- **KD Loss**：Student vs Teacher
+- **CE Loss**：Student vs Ground Truth
+
+### 数据蒸馏
+
+```
+Pre-trained LM
+   ↓
+[Teacher 生成指令 / 对话 / 推理数据]
+   ↓
+SFT（Student）
+
+```
+
+- 用大模型生成：
+  - Instruction-response
+  - Chain-of-Thought
+  - 多轮对话
+  - 并作为**SFT数据**
+- 小模型一般是重新训练的模型，而不是大模型的一部分
+- 小模型的“多任务泛化能力会弱一些”
+
+| 能力         | 大模型 | 小模型     |
+| ------------ | ------ | ---------- |
+| Seen tasks   | 强     | 强         |
+| Unseen tasks | 强     | 较弱       |
+| 复杂推理     | 强     | 明显下降   |
+| 工具调用     | 强     | 部分可保留 |
+
+### 为什么Teacher生成的SFT数据更便宜、更有效
+
+- **数据可控**：Teacher 可以：
+
+  - 统一格式（chat / role）
+  - 控制长度
+  - 控制难度
+  - 控制覆盖任务类型
+
+- 隐式知识被显示化：Teacher输出的是
+
+  - 已对齐的行为
+
+  - 已学会的推理路径
+
+    - Teacher可以输出**chain-of-Thought**，让SFT学习
+    - 推理路径被当做token序列
+
+    ```
+    Question: ...
+    Let's think step by step:
+    1. ...
+    2. ...
+    3. ...
+    Answer: ...
+    
+    ```
+
+    - **Structured Reasoning / Tool Trace**：更为工程化的模式
+    - **行为蒸馏（policy distillation）**，还学习了决策模式
+
+    ```
+    <analysis>
+    Step 1: ...
+    Step 2: ...
+    </analysis>
+    <final>
+    Answer
+    </final>
+    
+    ```
+
+    - 隐式行为蒸馏：即使不写推理，Student仍能学习到一部分回答结构、语言风格
+
+  - 规范的语言风格
+
+  - Student学的是压缩过的知识
+
+- 真实数据常有模糊、歧义、标签噪声；大模型生成的数据语义清晰、推理步骤明确
+
+- 总体来说人工真实数据的成本更高、质量更难控制
+
+- **但是Teacher推理成本高，蒸馏等于用一次较为贵的推理，换多次便宜的推理**
+
+  
+
