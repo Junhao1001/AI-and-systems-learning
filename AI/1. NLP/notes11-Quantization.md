@@ -207,7 +207,7 @@ SFT（Student）
 | 复杂推理     | 强     | 明显下降   |
 | 工具调用     | 强     | 部分可保留 |
 
-### 为什么Teacher生成的SFT数据更便宜、更有效
+#### 为什么Teacher生成的SFT数据更便宜、更有效
 
 - **数据可控**：Teacher 可以：
 
@@ -261,5 +261,111 @@ SFT（Student）
 
 - **但是Teacher推理成本高，蒸馏等于用一次较为贵的推理，换多次便宜的推理**
 
+### Logits / Sequence 蒸馏
+
+#### Logits 蒸馏
+
+**让 Student 去拟合 Teacher 在每一个 token 位置的 概率分布（logits / softmax）**
+$$
+\mathcal{L}_{KD} = \mathrm{KL}(
+\text{softmax}(z_t / T)
+\;\|\;
+\text{softmax}(z_s / T)
+)
+$$
+
+- $z_t$：Teacher logits
+- $z_s$：Student logits
+- $T$：Temperature（温度）
+
+
+
+**普通的CE Loss(Cross-Entropy loss):**
+$$
+\mathcal{L}_{CE}
+= - \sum_i y(i)\log p_s(i)
+$$
+这里的**y(i)是one-hot的**，它能告诉哪个是“对的”，却不能说明哪些是差点“对的”
+
+因此引入**Temperature T**：
+$$
+p_s^{(T)}(i)
+= \frac{e^{z_{s,i}/T}}{\sum_j e^{z_{s,j}/T}}
+$$
+
+- $T > 1$：
+
+  - 拉平分布
+  - 放大“非最大类”的信息
+
+- $T \to \infty$：接近 uniform
+
+- $T = 1$：普通 softmax
+
   
 
+**KD Loss(KL Divergence )**:
+
+定义:
+$$
+\mathcal{L}_{KD}
+= \mathrm{KL}(p_t^{(T)} \;\|\; p_s^{(T)})
+$$
+展开：
+$$
+= \sum_i p_t^{(T)}(i)
+\log \frac{p_t^{(T)}(i)}{p_s^{(T)}(i)}
+$$
+忽略与 Student 无关的常数项：
+$$
+\mathcal{L}_{KD}
+\equiv - \sum_i p_t^{(T)}(i)\log p_s^{(T)}(i)
+$$
+**总结来说：在 Logits Distillation 中，Student 的目标函数是一个联合目标：一部分约束其对真实 one-hot 标签的拟合，保证正确性；另一部分约束其对 Teacher 下一个 token 概率分布的拟合，从而学习到更平滑、更信息密集的决策边界**
+
+#### Sequence Distillation
+
+Teacher 直接生成**完整输出序列**，Student 把它当作“ground truth”来学
+
+```
+x → Teacher → ŷ
+(x, ŷ) → Student
+```
+
+和数据蒸馏有一定的重合点
+
+数据蒸馏仅是关心数据的来源，Teacher可以不输出序列，只输出label等；
+
+Sequence 蒸馏更关心**监督信号的形式（loss）**，将teacher输出的序列当做ground truth来拟合。
+
+一般来说：数据蒸馏包含Sequence蒸馏
+
+
+
+### Task-specific Student
+
+**Task-specific Student 是一个“只为某一类（或少数几类）任务而设计和训练的小模型”**
+
+和前面数据蒸馏中提到的**通用 LLM student**的区别如下，其更像是一个专用工具：
+
+| 维度       | Task-specific Student | 通用小 LLM Student |
+| ---------- | --------------------- | ------------------ |
+| 任务范围   | 单一或少数            | 多任务             |
+| 输入形式   | 固定 schema           | Instruction / Chat |
+| 输出形式   | Label / span / score  | 自由文本           |
+| 推理方式   | 非生成式（多）        | 自回归生成         |
+| 延迟       | 极低                  | 较高               |
+| 部署       | 工业级稳定            | 灵活但重           |
+| 是否像 LLM | ❌                     | ✅                  |
+
+- 一般用于分类、QA、排序、匹配
+
+#### 和SFT的区别
+
+两者似乎都是为了“特定任务”微调：
+
+- **SFT让同一个模型学会某个任务**
+  - 其监督信号往往为人工标注数据、为真实ground-truth
+- **Task-specific Student 是“训练一个专门为该任务设计/选择的小模型，用大模型当老师来教”**
+  - 其监督信号为Teacher LLM的输出
+  - 损失函数可以是logits、sequence
