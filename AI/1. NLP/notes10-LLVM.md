@@ -357,3 +357,152 @@ Instruction 的关键属性：
 - 有操作数
 - 有use-def 关系
 - 可能有side-effect
+
+
+
+## MEM（内存模型）
+
+### some concepts
+
+- **alias**：两个（或多个）不同的指针，在运行时**可能指向同一块内存**
+
+  - LLVM的alias结论一般是四值逻辑
+
+  | 结果           | 含义                        |
+  | -------------- | --------------------------- |
+  | `NoAlias`      | 绝对不会指向同一内存        |
+  | `MayAlias`     | 可能指向同一内存（最保守）  |
+  | `MustAlias`    | 一定指向同一内存            |
+  | `PartialAlias` | 部分重叠（如 struct field） |
+
+
+
+内存（地址）不是SSA的，内存读出来的值是SSA的
+
+- **内存 = 可变状态**
+- **寄存器值（SSA Value）= 不可变**
+
+因此LLVM 使用**显示内存指令**，分别表示SSA value和内存：
+
+```
+SSA Value 世界        内存世界
+----------------    ----------------
+%x = add ...        store i32 %x, i32* %p
+%y = mul ...        %y = load i32, i32* %p
+
+```
+
+
+
+### alloca：栈上分配内存
+
+```
+%p = alloca i32
+```
+
+**在当前函数的栈帧里分配一块 i32 大小的内存**
+
+- `%p` 是一个 **地址**
+- 类型是 `i32*`
+
+**特点**：
+
+- 生命周期是**整个Function**
+- 一般只出现在entry block
+
+### store：往内存中写值
+
+```
+store i32 %v, i32* %p
+```
+
+- 把 SSA 值 `%v` 写入内存 `%p`
+
+- **不产生返回值**
+
+- 有 side-effect，体现在如下方面
+
+  | 优化      | 是否受 store 影响        |
+  | --------- | ------------------------ |
+  | DCE       | 不能删“可能被读”的 store |
+  | LICM      | 不能随便 hoist           |
+  | Reorder   | 不能跨越 aliasing store  |
+  | Vectorize | 内存依赖可能阻止         |
+
+### load：从内存读值
+
+```
+%x = load i32, i32* %p
+```
+
+- 从 `%p` 读
+- 读出来的 `%x`：
+  - 是 SSA Value
+  - 不可变
+
+
+
+仅用上面三个命令，会有如下问题：
+
+- 同一个变量：被反复load/store
+- 编译器必须考虑
+  - alias
+  - 内存顺序
+
+### mem2reg
+
+其核心思想为：如果一块内存
+
+- 只在函数内使用
+
+- 没有被取地址逃逸
+
+ 那就把它“从内存提升到 SSA 寄存器
+
+- mem2reg删除了alloca/load/store
+- **引入了SSA Value 和 φ 节点**
+
+例子，C语言为：
+
+```c
+int foo(int a) {
+    int x = a;
+    x = x + 1;
+    return x;
+}
+
+```
+
+引入mem2reg前为
+
+```
+%x = alloca i32
+store i32 %a, i32* %x
+%v1 = load i32, i32* %x
+%v2 = add i32 %v1, 1
+store i32 %v2, i32* %x
+%ret = load i32, i32* %x
+
+```
+
+引入后为：
+
+```
+%x1 = %a
+%x2 = add i32 %x1, 1
+ret i32 %x2
+```
+
+#### mem2reg的进一步理解
+
+- **mem2reg 不是一种变量**； **mem2reg 是一个 优化Pass，对 LLVM IR 的一种“变换”** 
+- mem2reg 把“用 memory 表示的局部变量”提升为“SSA value + φ”
+- LLVM IR 语言本身并不要求“必须 mem2reg “
+  - 前端一定会生成 alloca + load/store，这是最简单、最保守、最正确的 lowering 方式
+  - mem2reg 是“可选的 Pass”
+    - 你 **可以不跑**
+    - 在 `-O0` 时：
+      - mem2reg **通常不跑**
+    - 在 `-O1+`：
+      - mem2reg **几乎一定跑**
+- **LLVM IR 语言本身允许 memory-based 表达； 在优化流水线中，通常会尽早运行 mem2reg，使局部标量变量转为 SSA，从而方便后续优化**
