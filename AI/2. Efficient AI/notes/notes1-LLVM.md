@@ -28,6 +28,31 @@
 目标机器代码 (x86 / ARM / RISC-V)
 ```
 
+**AST(Abstract Syntax Tree)**: **是源代码“语法结构”的树形表示**
+
+- 回答了：这段代码**在语法上**是什么意思？
+- 体现**运算优先级、语法嵌套关系**
+
+举例来说
+
+码：
+
+```
+a = b + c * d;
+```
+
+AST（抽象表示）是：
+
+```
+     =
+    / \
+   a   +
+      / \
+     b   *
+        / \
+       c   d
+```
+
 #### 编译器的前端、中端、后端
 
 **前端：**
@@ -506,3 +531,193 @@ ret i32 %x2
     - 在 `-O1+`：
       - mem2reg **几乎一定跑**
 - **LLVM IR 语言本身允许 memory-based 表达； 在优化流水线中，通常会尽早运行 mem2reg，使局部标量变量转为 SSA，从而方便后续优化**
+
+### Others
+
+AI compiler IR 和 LLVM IR 各自负责什么：
+
+**AI Compiler IR 主要解决“算子和张量怎么变”，LLVM IR 主要解决“指令和内存怎么跑在硬件上”**
+
+
+
+# PASS
+
+Pass 是“**对 LLVM IR 做分析或修改的一次完整遍历与决策过程**”。
+
+Pass 会在IR结构上“跑一次程序”，并可能有如下结果：
+
+- 只看不改（**Analysis Pass**）
+- 看完再改（**Transformation Pass**）
+
+### Pass的工作
+
+举例来说，一个普通 IR 如下所示（简化）：
+
+```
+define i32 @foo(i32 %x) {
+entry:
+  %1 = add i32 %x, 0
+  %2 = mul i32 %1, 2
+  ret i32 %2
+}
+```
+
+可以看到
+
+- `%1 = add %x, 0` 是**冗余**
+- `%1` 只被 `%2` 使用
+- 可以直接把 `%1` 去掉
+
+但 LLVM 不会“自动知道”这一点。**Pass 的作用就是把“你肉眼能看出的东西，写成程序”**
+
+#### 遍历IR（Traversal)
+
+Pass 会明确回答：对**哪一层IR**进行改动
+
+- Module Pass：看所有函数
+
+- Function Pass：一个函数一个函数处理
+
+- Loop Pass：一个 loop 一个 loop 处理
+
+例如Function Pass:
+
+```
+for (BasicBlock &BB : F) {
+  for (Instruction &I : BB) {
+    // 看每一条指令
+  }
+}
+```
+
+**IR结构变成了遍历的数据结构**
+
+#### 分析IR(Analysis)
+
+在遍历过程中，Pass 会建立“事实”：
+
+- 这个值被谁用？
+- 这条指令有没有副作用？
+- 这个 BasicBlock 的前驱是谁？
+- 这个值是不是常量？
+
+这些事实并不是IR本身，而是Pass计算出来的
+
+#### 决策 + 修改 IR（Transformation）
+
+若满足一定条件，Pass会**手动改IR**
+
+```Cpp
+%1 = add i32 %x, 0
+```
+
+变为：
+
+```
+; %1 消失了
+```
+
+并把 `%1` 的所有使用替换为 `%x`：
+
+```
+I.replaceAllUsesWith(X);
+I.eraseFromParent();
+```
+
+同时也说明 **IR 是“可变的”**，这点非常重要
+
+因此**PASS不是一条优化规则，而是“一次完整过程”**。整个过程通常包括：
+
+```
+（遍历）
+→ （收集信息）
+→ （判断是否合法）
+→ （修改 IR）
+→ （保证 IR 仍然合法）
+```
+
+合法性体现在：
+
+- 不能删有副作用的指令
+- 不能破坏 SSA 形式
+- 不能让 use-def 关系悬空
+- ...
+
+### PASS的类型
+
+#### Analysis Pass（只读）
+
+它回答的问题通常是：
+
+- “这个值会不会被用到？”
+- “这是不是一个循环？”
+- “这个变量的活跃区间？”
+
+例子：
+
+- DominatorTree
+- LoopInfo
+- Alias Analysis
+
+**它们不修改 IR，只为别的 Pass 提供信息**
+
+#### Transformation Pass（会改 IR）
+
+它们会：
+
+- 删除指令
+- 合并指令
+- 插入新指令
+- 改变控制流
+
+例子：
+
+- Dead Code Elimination
+- Constant Folding
+- Loop Unrolling
+
+**AI Compiler 里的大多数优化，本质都是这一类**
+
+### PASS & IR
+
+- IR 决定你“能做什么”
+- Pass 决定你“实际做了什么”
+
+因此：
+
+- LLVM 可以有很多 IR
+
+- 同一个 IR 可以跑很多 Pass
+
+- **Pass 顺序会影响最终结果（Pass Pipeline）**
+
+**Pass 不是“编译器的一部分”，而是“编译器的主要工作形式”**
+
+```
+编译器≈
+IR
++ 一堆 Pass
++ 一个执行顺序
+```
+
+现实中编译流程通常为：
+
+```
+源代码
+ ↓
+AST
+ ↓
+（前端 IR）
+ ↓
+LLVM IR（中层 IR）
+ ↓
+一堆 Pass（分析 + 变换）
+ ↓
+更低级 IR / Selection DAG
+ ↓
+Backend Pass
+ ↓
+机器码
+```
+
+**LLVM IR 是“程序的结构化描述”，不是“正在运行的程序”；而 Pass 是在这个描述上，反复分析与改写程序结构的自动化过程**
