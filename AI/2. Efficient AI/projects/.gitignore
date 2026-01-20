@@ -1,0 +1,24 @@
+# ---- CMake ----
+build/
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+
+# ---- Visual Studio ----
+.vs/
+.vscode/
+*.vcxproj*
+*.sln
+*.filters
+*.user
+
+# ---- Binaries ----
+*.exe
+*.lib
+*.pdb
+*.obj
+
+# ---- OS ----
+.DS_Store
+Thumbs.db
