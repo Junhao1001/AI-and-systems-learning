@@ -1,7 +1,7 @@
 # PASS
 
 ```
-Phase 0  LLVM 基础巩固（你已基本完成）
+Phase 0  LLVM 基础巩固
 Phase 1  Analysis Pass 体系（Dominator / Loop / Memory）
 Phase 2  Transformation Pass 设计与合法性
 Phase 3  Pass Pipeline 与优化顺序
@@ -1355,3 +1355,106 @@ PostDominatorTree 描述的是：**程序“无论怎么走，最终一定会经
   - 找 if-else 的 merge block
   - 找异常路径的最终汇合点
   - 找所有路径“最终都会执行”的 cleanup
+
+
+
+## 5. Transformation Pass
+
+需要关注的核心问题：**在什么条件下，修改 IR 仍然语义等价？**
+
+### 5.1 Leagality Check
+
+**在变换前后，程序在所有可观察行为上等价**
+
+#### 控制流合法性（CFG Legality）
+
+往往需要考虑：
+
+- 是否引入了不可达 block？
+- 是否破坏了 dominance / post-dominance？
+- 是否破坏异常路径？
+
+#### 内存依赖合法性
+
+需要保证：**重排 / 拆分 / 合并的内存访问，在所有路径上语义一致**
+
+尝尝会用到以下工具：
+
+- AliasAnalysis (AA)
+- MemorySSA
+- DependenceAnalysis
+
+#### 副作用与不可移动指令
+
+以下指令**基本不能乱动**：
+
+- `volatile load/store`
+- `atomic`
+- `call`
+- I/O/syscalls
+
+####  控制依赖合法性（if / predication）
+
+必须保证：
+
+- 原来在某些路径不执行的指令
+- 现在不会被“强制执行”
+
+通过判断：**目标位置 post-dominates 原位置**
+
+#### 循环语义合法性
+
+对 loop 变换（tiling / unroll / interchange）：
+
+需要检查：
+
+- Loop 是否 canonical
+- 是否存在 loop-carried dependence
+- 是否是单 exit / 单 latch
+- induction variable 是否可重建
+
+#### 目标相关合法性
+
+在 AI / NPU / GPU 编译里非常重要：
+
+- 是否超出 scratchpad / SRAM
+- 是否破坏 vector width / warp 语义
+- 是否破坏 memory alignment
+
+并非是与平台无关的
+
+### 5.2 经典范式：
+
+**Guarded Transformation**：
+
+```
+if (!isLegal(...)) return PreservedAnalyses::all();
+doTransform();
+return PreservedAnalyses::none();
+```
+
+特点：
+
+- 保守，稳
+- LLVM 主线大量使用
+
+在AI Compiler里，有如下例子：（当前先记录，后续进一步了解）
+
+**为 NPU 做 Tiling**：
+
+**Phase 1**
+
+- SCEV → affine index
+- Dependence → 无 loop-carried dep
+- Memory model → SRAM fits
+
+**Phase 2**
+
+- legality：
+  - no alias across tiles
+  - no cross-tile dependence
+  - tile size aligned to vector width
+- transform：
+  - split loop
+  - rebuild induction
+  - insert prologue/epilogue
