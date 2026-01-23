@@ -1,5 +1,15 @@
 # PASS
 
+```
+Phase 0  LLVM 基础巩固（你已基本完成）
+Phase 1  Analysis Pass 体系（Dominator / Loop / Memory）
+Phase 2  Transformation Pass 设计与合法性
+Phase 3  Pass Pipeline 与优化顺序
+Phase 4  从 LLVM 到 AI Compiler IR（MLIR / Graph）
+Phase 5  AI Compiler 核心优化（Fusion / Tiling / Scheduling）
+Phase 6  后端 Lowering（LLVM / 硬件）
+```
+
 ## Some Concepts
 
 - **out-of-tree pass**：LLVM 的插件；在 LLVM 源码内写 Pass 的问题
@@ -707,6 +717,15 @@ cmake -S . -B build ^
     -DLLVM_DIR=D:/LLVM/llvm-build/lib/cmake/llvm
   ```
 
+  - 最终编译命令
+
+
+  ```
+  cmake --build build --config Release
+  ```
+
+  
+
 - opt 运行 
 
   - 文件位置根据实际情况改动
@@ -717,3 +736,622 @@ cmake -S . -B build ^
 
   
 
+## 3. 简单的Pass (分析/修改IR)
+
+创建一个示例IR: test.ll
+
+```
+; ModuleID = 'test'
+source_filename = "test.c"
+
+define i32 @main() {
+entry:
+  %a = alloca i32, align 4
+  %b = alloca i32, align 4
+  store i32 10, i32* %a, align 4
+  store i32 20, i32* %b, align 4
+  %x = load i32, i32* %a, align 4
+  %y = load i32, i32* %b, align 4
+  %sum = add i32 %x, %y
+  ret i32 %sum
+}
+```
+
+### InstructionCountPass (统计指令数)
+
+代码核心如下所示：
+
+```cpp
+struct InstructionCountPass : public PassInfoMixin<InstructionCountPass> {
+    PreservedAnalyses run(Function &F, FunctionAnalysisManager &) {
+        int count = 0;
+        for (auto &BB : F)
+            for (auto &I : BB)
+                count++;
+        errs() << "Function " << F.getName() << " has " << count << " instructions\n";
+        return PreservedAnalyses::all();
+    }
+};
+```
+
+- `struct InstructionCountPass : public PassInfoMixin<InstructionCountPass>`:
+  - LLVM中Pass 通常用 struct 定义
+  - 在新Pass Manager中，**只要你提供了 `run()` 函数，并继承 `PassInfoMixin`，LLVM 就认为你是一个 Pass**
+- `PassInfoMixin<T>`:
+  - 使用了**CRTP(Curiously Recurring Template Pattern)**：奇异递归模板模式
+    - **基类拿到派生类的类型**
+    - 在**编译期**完成绑定
+    - 不需要虚函数
+  - LLVM用它来：
+    - 给你的 Pass 生成唯一类型信息
+    - 进行 Pass 管理、调度、缓存分析结果
+  - 简单来说：**用于告诉 LLVM：这个 struct 是一个 Pass**
+
+- `PreservedAnalyses run(Function &F, FunctionAnalysisManager &)`
+
+  - Pass的入口函数, 统一约定用`run`作为入口：
+  - 不同粒度的Pass, `run`的第一参数不同：
+
+  | Pass 类型     | run 参数      |
+  | ------------- | ------------- |
+  | Function Pass | `Function &F` |
+  | Module Pass   | `Module &M`   |
+  | Loop Pass     | `Loop &L`     |
+
+  - `Function &F`即指传入的被处理的函数
+  - `FunctionAnalysisManager &`:
+    - 管理 **分析结果缓存**
+    - 这里暂时没用到
+  - `PreservedAnalyses`: 用于说明**Pass 执行完后，哪些分析结果仍然是有效的**
+
+- `for (auto &BB : F)` & `for (auto &I : BB)`
+
+  - 常见的遍历模板
+  - 先遍历BasicBlock，再在每个BB中遍历指令Instruction
+
+- 最后打印输出
+
+- `PreservedAnalyses::all()`:
+  - `all()`: 说明我这个 Pass **没有修改 IR**， 所有已有的分析结果都仍然有效
+  - `none()`: 说明修改了IR
+
+### AddToSubPass (把add替换为sub)
+
+- `AddToSubPass.cpp` (函数实现部分) 最初实现
+
+```cpp
+struct AddToSubPass : public PassInfoMixin<AddToSubPass> {
+    PreservedAnalyses run(Function &F, FunctionAnalysisManager &) {
+        for (auto &BB : F) {
+            for (auto &I : BB) {
+                if (auto *op = dyn_cast<BinaryOperator>(&I)) {
+                    if (op->getOpcode() == Instruction::Add) {
+                        IRBuilder<> builder(op);
+                        auto *newSub = builder.CreateSub(op->getOperand(0), op->getOperand(1));
+                        op->replaceAllUsesWith(newSub);
+                        op->eraseFromParent();
+                    }
+                }
+            }
+        }
+        return PreservedAnalyses::none();
+    }
+};
+```
+
+上述代码有一个严重问题：
+
+- `eraseFromParent()` 会：
+  - **把当前指令从 BasicBlock 链表中移除**
+  - **使当前迭代器失效**
+- 因此下一步循环访问的是：**已经被释放 / 无效的内存**
+- 这会导致崩溃
+
+因此改动如下：
+
+```cpp
+struct AddToSubPass : public PassInfoMixin<AddToSubPass> {
+    PreservedAnalyses run(Function &F, FunctionAnalysisManager &) {
+        SmallVector<BinaryOperator*, 8> Adds;
+
+    // 第一步：只遍历，不修改
+        for (auto &BB : F) {
+            for (auto &I : BB) {
+                if (auto *op = dyn_cast<BinaryOperator>(&I)) {
+                    if (op->getOpcode() == Instruction::Add) {
+                        Adds.push_back(op);
+                    }
+                }
+            }
+        }
+
+    // 第二步：安全地修改
+        for (auto *op : Adds) {
+            IRBuilder<> builder(op);
+            auto *newSub = builder.CreateSub(
+                op->getOperand(0), op->getOperand(1)
+            );
+            op->replaceAllUsesWith(newSub);
+            op->eraseFromParent();
+        }
+        
+        return PreservedAnalyses::none();
+    }
+};
+```
+
+- `op->eraseFromParent()`在此处
+  - `op` 从 `BasicBlock` 的链表中移除
+  - 内存被释放
+  - **但是没有修改 `Adds` 本身**
+  - 所以`Adds`迭代器仍然有效，不会崩溃
+- 上述实现的Pass能将所有`Add`语句替换为`Sub`
+
+
+
+## 4. Analysis Pass
+
+**Analysisi Pass不修改IR，只回答问题**
+
+需要了解的Analysis Pass (和AI compiler相关)
+
+| Analysis                   | 作用           | AI Compiler 中的角色         |
+| -------------------------- | -------------- | ---------------------------- |
+| **DominatorTree**          | 控制流支配关系 | 判断合法 hoist / fusion      |
+| **LoopInfo**               | 循环结构       | Tiling / Unrolling / Mapping |
+| **ScalarEvolution (SCEV)** | 循环迭代次数   | Shape / Range 推导           |
+| **PostDominatorTree**      | 控制流后支配   | 控制依赖消除                 |
+
+### 4.1 Dominator Tree
+
+#### Some Concepts
+
+- **CFG**: 控制流
+
+  | 视角          | 说明                                        |
+  | ------------- | ------------------------------------------- |
+  | IR 文件       | **隐式存在**（由 br / switch / ret 等决定） |
+  | LLVM 内存     | **显式图结构（analysis 视图）**             |
+  | DominatorTree | **基于 CFG 计算出来的树**                   |
+
+- **Dominance定义**:  
+
+  - 对 CFG 中两个节点 A 和 B：
+
+  - **A dominates B** ⇔ **所有从入口（entry）到 B 的路径，都必须经过 A**
+
+  - 记作：
+
+  ```
+  A dom B
+  ```
+
+- **Immediate Dominator (idom)**：
+  - B 的 **Immediate Dominator** = 严格支配 B，且离 B 最近的那个节点
+
+- **Dominator Tree**:
+  - 把每个节点连到它的 idom
+  - 得到一棵树（entry 是根）
+  - DT 是 CFG 的“抽象结构”, 而非CFG本身
+
+#### DT的输入和输出
+
+**输入**：一个 Function 的 CFG
+
+- BasicBlock 列表
+
+- Terminator 指令（br / switch / ret）
+
+  - br: 跳转命令
+
+    - 无条件跳转
+
+    ```
+    br label %next
+    ```
+
+    - 条件跳转
+
+    ```
+    br i1 %cond, label %then, label %else //%cond为1，则跳转then，否则跳转else
+    ```
+
+  - ret: 函数出口，CFG重点
+
+    ```
+    ret void
+    ret i32 %x
+    ```
+
+  - switch: 多分支控制流：
+
+    ```
+    switch i32 %x, label %default [
+      i32 0, label %case0
+      i32 1, label %case1
+    ]
+    ```
+
+- CFG 边关系
+
+**输出**：可以是如下输出结构
+
+- **dominate(A, B)** 查询接口
+- **Immediate Dominator（idom）**
+- **Dominator Tree 本身（树结构）**
+- **Dominator 前序 / 后序遍历**
+
+#### LLVM中常用的DT的API
+
+- 获取Dominator Tree:
+
+```cpp
+auto &DT = FAM.getResult<DominatorTreeAnalysis>(F);
+```
+
+- 判断支配关系：
+
+```cpp
+DT.dominates(A, B);
+```
+
+- 获取IDom:
+
+```cpp
+BasicBlock *IDom = DT.getNode(BB)->getIDom()->getBlock();
+```
+
+- 获取Dominator Tree节点
+
+```cpp
+DomTreeNode *N = DT.getNode(BB);
+```
+
+- 遍历Dominator Tree:
+
+```cpp
+for (auto *Child : *DT.getNode(BB)) {
+    // Child 是 DomTreeNode*
+}
+```
+
+#### AI Compiler中的应用
+
+AI Compiler中也有CFG，但是形式略有变化：
+
+| LLVM       | AI Compiler    |
+| ---------- | -------------- |
+| BasicBlock | Region / Block |
+| Branch     | Control Op     |
+| CFG        | Region CFG     |
+
+AI Compiler中对DT的应用例如：
+
+- **Operator Fusion 合法性**：能不能把算子 A 和 B fuse？
+  - 必须保证A 在所有路径上都先于 B 执行
+  - 中间没有条件执行破坏
+- **Hoisting / Sinking（调度）**：
+  - 把算子提前到公共路径
+  - 或下沉到特定分支
+- **死代码消除（DCE）**
+  - 没有被支配的使用
+  - 不可达
+- **Shape / Buffer 安全性**
+  - buffer 初始化是否一定发生？
+  - 访问是否可能在未定义路径？
+
+### 4.2 LoopInfo
+
+目标：**识别函数中的循环结构（Loop / Loop Nest），并提供循环信息给优化 Pass**
+
+#### Some Concepts
+
+在LLLVM中，**Loop对象**往往包含：
+
+- **Loop Header**: Loop 的入口 BasicBlock
+  - 支配循环内所有 BasicBlock
+  - 有回边跳回 Header
+- **Latch**: 包含回边的BB
+  - Backedge: **从循环内某个 BB 跳回 Header** → 回边
+  - LLVM 利用 **backedge = predecessors(header) ∩ loop** 来识别循环
+- **Preheader**：循环前的单前驱 BB
+- **Body / Blocks**：所有循环内的 BasicBlock
+- **SubLoops**：嵌套循环
+
+#### LoopInfo
+
+- **LoopInfo** = `Function` 对象下的 `Loop` 集合
+- 结构是 **树状（Loop Nest Tree）**
+
+```
+LoopInfo
+ ├─ Loop1
+ │    ├─ header = BB1
+ │    ├─ blocks = {BB1, BB2, BB3}
+ │    └─ subloops = {Loop1.1}
+ └─ Loop2
+      ├─ header = BB10
+      └─ blocks = {BB10, BB11}
+```
+
+- 每个 `Loop` 对象知道：
+  - header
+  - 所有块
+  - 子循环
+  - 父循环
+
+#### LLVM API使用方法
+
+- 获取LoopInfo
+
+  ```cpp
+  FunctionAnalysisManager FAM;
+  auto &LI = FAM.getResult<LoopAnalysis>(F);
+  ```
+
+- 常用API
+
+| 方法                          | 描述                                                         |
+| ----------------------------- | ------------------------------------------------------------ |
+| `LI.begin() / LI.end()`       | 遍历函数顶层循环                                             |
+| `Loop *L = LI.getLoopFor(BB)` | 获取某个 BasicBlock 所属循环                                 |
+| `L->getHeader()`              | 获取循环头                                                   |
+| `L->getLoopLatch()`           | 获取循环回边块                                               |
+| `L->getBlocks()`              | 获取循环包含的所有 BasicBlock                                |
+| `L->getSubLoops()`            | 获取嵌套循环                                                 |
+| `L->isLoopInvariant(Value*)`  | 检查一个操作数是否循环不变 （判断指令是否不依赖循环内部变量） |
+
+#### AI Compiler 中LoopInfo的作用 （现在有点理解不了）
+
+| LLVM Pass 场景              | AI Compiler 场景                      |
+| --------------------------- | ------------------------------------- |
+| LICM (hoist loop invariant) | 将算子移到循环外，减少重复计算        |
+| Loop Unroll                 | 将 Tensor 运算展开到多层循环          |
+| Loop Tiling                 | 划分 Tile / Block，映射到 GPU 或 SIMD |
+| Fusion / Scheduling         | 判断 loop nest 内算子顺序和合法性     |
+
+- **Loop-Invariant Code Motion (LICM)**
+  - **把循环里“每一轮都算一样结果”的代码，搬到循环外面算一次**
+  - 减少重复计算
+  - 需要 **LoopInfo + DominatorTree**
+  - 条件：**指令对循环内变量无依赖**
+
+-  **Loop Unroll（循环展开）**
+
+  - **把循环体复制多次，减少分支 / 提高指令级并行**
+  - 用 **代码体积换性能**
+  - AI Compiler 中常用于 **小循环 / 内层循环**
+
+- **Loop Tiling（Blocking）**：
+
+  - 把大循环切成小块，提升 cache / memory locality
+
+    ```cpp
+    for i in N:
+      for j in M:
+        C[i][j] += A[i][k] * B[k][j]
+    ```
+
+    - 每次迭代都要从内存加载`A[i][k]`和`B[k][j]`
+    - 如果A/B很大，cache可能放不下；每次都要访问DRAM
+
+  - Tiling后：
+
+    ```cpp
+    for ii in tiles of i:
+      for jj in tiles of j:
+        for i in ii:
+          for j in jj:
+            ...
+    ```
+
+  - `A[ii:ii+Ti]` 和 `B[jj:jj+Tj]`
+
+    - 可以 **完整放进 cache**
+
+  - 每次 tile 内：
+
+    - 数据被反复复用
+    - DRAM 访问次数显著减少
+
+  - 解决 **memory bandwidth** 问题
+
+- **Loop Vectorization（向量化）**
+
+  - **把标量循环，变成 SIMD 指令一次算多个元素**
+  - 利用**硬件向量单元（AVX / NEON / GPU）**
+
+### 4.3 ScalarEvolution（SCEV）（暂时不用深入）
+
+**SCEV 是 LLVM 用来“理解循环中标量值如何随循环迭代变化”的符号分析系统**
+
+- 它构建的是 **符号表达式（Symbolic Expression）**
+
+- ```cpp
+  i = 0;
+  for (...) {
+    ...
+    i = i + 1;
+  }
+  ```
+
+- SCEV 会把 `i` 理解为：i = 初始值 + 迭代次数 × 步长
+
+#### SCEV的目标：
+
+```cpp
+for (i = 0; i < N; i++)
+  A[i] = ...
+```
+
+编译器会想知道：
+
+- `i` 会取哪些值？
+
+- `i` 会不会溢出？
+
+- `A[i]` 是否越界？
+
+- 两个访问 `A[i]` 和 `A[i+1]` 是否冲突？
+
+- 这个循环能不能：
+
+  - vectorize
+
+  - unroll
+
+  - tile
+
+  - 并行化
+
+- SCEV是回答这些问题的**基础**
+
+#### 输入输出
+
+输入可以是多种形式：
+
+| 输入          | 来自                   |
+| ------------- | ---------------------- |
+| CFG           | 控制流                 |
+| LoopInfo      | 循环结构               |
+| IR 指令       | PHI / add / mul / icmp |
+| DataLayout    | 位宽 / 对齐            |
+| DominatorTree | 辅助判断               |
+
+**输出：**
+
+- **一个SCEV表达式树**
+  - 标量值随 loop iteration 的变化规律
+  - 上界 / 下界（有时）
+  - stride / recurrence
+
+- 一些常用SCEV 的核心表达式类型：
+
+  - `SCEVConstant`
+
+    ```
+    5
+    ```
+
+  - `SCEVUnknown`
+
+    ```
+    N
+    ```
+
+    - 运行期才知道
+    - 但 SCEV 会当成一个“符号”
+
+  -  `SCEVAddExpr`
+
+    ```
+    i + 3
+    ```
+
+  -  `SCEVMulExpr`
+
+    ```
+    i * 4
+    ```
+
+  -  `SCEVAddRecExpr`（循环递推，最重要）
+
+    ```
+    {Start, +, Step}
+    ```
+
+    表示：
+
+    ```
+    Start + Iteration × Step
+    ```
+
+#### AI Compiler中的SCEV用途：
+
+**内存访问分析**：
+
+- 判断 stride
+- 判断是否连续
+- 判断 alias （ 两个不同的指针 / 内存访问，可能指向同一块内存）
+- 判断可 vectorize
+
+**Tiling/Fusion 合法性**：
+
+- producer / consumer 是否访问同一 tile
+- 判断是否存在 loop-carried dependence （当前迭代依赖上一次（或更早）迭代的结果）
+
+**并行化：**
+
+- 如果SCEV 证明访问互不冲突，则可以并行
+
+### 4.4 PostDominatorTree（PDT）
+
+PostDominatorTree 描述的是：**程序“无论怎么走，最终一定会经过哪里”**
+
+和 DominatorTree 正好是**时间方向相反**的概念：
+
+| 概念              | 关注点                          |
+| ----------------- | ------------------------------- |
+| **Dominator**     | 从 *entry* 出发，**必经**       |
+| **PostDominator** | 从某点出发，到 *exit*，**必经** |
+
+#### Some Concepts：
+
+- Post-dominance:
+
+  - 节点 **A post-dominates B**, 当且仅当： **从 B 出发到任意 exit 的所有路径，都必须经过 A**
+  - 记作：
+
+  ```
+  A pdom B
+  ```
+
+-  Immediate Post-Dominator（ipdom）
+
+  - A 是 B 的 immediate post-dominator， 当且仅当：
+    - A post-dominates B
+    - 且 A 是离 B 最近的那个 post-dominator
+
+- PostDominatorTree（PDT）
+
+  - 把 `ipdom` 关系连成一棵树：
+
+    ```
+    exit
+     └── ...
+         └── A
+             └── B
+                 └── C
+    ```
+
+  - 这棵树：
+
+    - 根节点是 **exit**
+    - 子节点在“控制流收敛意义上”更早结束
+
+#### 常用API
+
+- **判断 post-dominance：**
+
+  ```cpp
+  PDT.dominates(A, B);
+  ```
+
+  - 名字还是 `dominates`，但**语义是 post-dominates**
+
+- **取 immediate post-dominator**
+
+  ```cpp
+  DomTreeNodeBase<BasicBlock> *Node = PDT.getNode(BB);
+  BasicBlock *IPDom = Node->getIDom()->getBlock();
+  ```
+
+- **查公共 post-dominator（超级常用）**
+
+  ```cpp
+  BasicBlock *CPD = PDT.findNearestCommonDominator(BB1, BB2);
+  ```
+
+  - 找 if-else 的 merge block
+  - 找异常路径的最终汇合点
+  - 找所有路径“最终都会执行”的 cleanup
