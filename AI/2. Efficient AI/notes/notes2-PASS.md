@@ -1458,3 +1458,105 @@ return PreservedAnalyses::none();
   - split loop
   - rebuild induction
   - insert prologue/epilogue
+
+
+
+## 6. Pass Pipeline 与优化顺序
+
+Pass Pipeline: **让一堆“各自正确的 Pass”在一起仍然正确、而且更强**
+
+- 一组 Pass + 执行顺序 + 执行粒度
+
+### 6.1 Pipeline的维度
+
+#### Pass 粒度
+
+| 粒度         | Pass 看到的东西 |
+| ------------ | --------------- |
+| ModulePass   | 全程序          |
+| CGSCCPass    | 递归调用图      |
+| FunctionPass | CFG / Loop      |
+| LoopPass     | 单个 loop       |
+| BasicBlock   | 单个 BB         |
+
+#### Analysis / Transformation 交错
+
+一个成熟的pipeline应该为如下架构：
+
+```
+[Canonicalize]
+→ [Analysis]
+→ [Transform]
+→ [Cleanup]
+→ repeat
+```
+
+#### Canonical Form
+
+**Pipeline 的真正目标不是“优化”，而是把 IR 推向某种 canonical form**
+
+- Canonical IR = **结构统一、形式稳定、便于分析和变换的 IR 表达**
+- 其不一定是性能高的，但是一般易分析和变换，更加关注结构
+
+- 例如
+
+  - SSA
+
+  - Loop Simplify
+
+  - LCSSA
+
+  - Affine loop
+
+### 6.2 LLVM Pipeline 常见顺序
+
+- **IR 正规化**：
+
+  ```
+  - mem2reg
+  - instcombine （折叠指令成最简单形式，较为激进，常多轮执行）
+  - simplifycfg （整理控制流结构，如删除空BB，合并单前继BB，删除不可达分支等）
+  ```
+
+  - 去除栈变量
+  - 把 IR 变“干净”
+  - 统一结构
+
+- **标量优化（反复多轮）**：
+
+  ```
+  - early-cse
+  - gvn
+  - licm （把循环中“不变”的指令挪出循环）
+  - dce
+  - reassociate
+  ```
+
+  - 小步快跑
+  - 多轮 fixed-point
+
+- **循环优化**：
+
+  ```
+  - loop-simplify
+  - lcssa
+  - licm
+  - loop-unroll
+  - loop-vectorize
+  ```
+
+  - 注意要先simplify, 再transform
+
+- **清理**：
+
+  ```
+  - instcombine
+  - dce
+  - simplifycfg
+  ```
+
+  - Transformation 往往会：
+    - 引入临时变量
+    - 产生死代码
+    - 打破简洁表达
+  - 需要Cleanup Pass进行清理
