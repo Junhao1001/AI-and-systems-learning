@@ -85,7 +85,7 @@ Input → Conv → ReLU → MatMul → Output
 
 ### Lowering
 
-Lowering指**将“抽象高的表示” 转成“更接近硬件的表示”**
+Lowering指**将“抽象高的IR” 转成“更接近硬件的IR”**
 
 例如：
 
@@ -98,6 +98,9 @@ Nested Loops
  ↓
 Vector Instructions
 ```
+
+- 这个操作往往是逐层的，因为不同的优化适用于不同的层
+- 硬件细节不该太早暴露
 
 ### Optimization
 
@@ -153,11 +156,32 @@ for i in N:
 
 ## 2. MLIR
 
+MLIR入门讲解：https://www.bilibili.com/video/BV1Hd4y1U7mb/?spm_id_from=333.337.search-card.all.click&vd_source=47b9e94682446eba3bcd8ada1d947692 
+
+### 背景
+
+常见的IR表示系统：
+
+![image-20260129141001475](assets/image-20260129141001475.png)
+
+- C++等高级语言在Clang前端编译时，不会有**特定于语言的优化**，优化主要集中在LLVM IR（抽象层级偏低）中，会导致优化的不充分
+- Swift/Rust等语言会增加一个属于自己层级的IR，**执行特定的一些优化（但是是语言特定）**
+- 深度学习框架先会转换到Graph IR，但是**图IR缺少硬件相关的信息**，会进一步转换成对应后端的IR
+- TVM， 一种端到端的基于算子的人工智能编译器
+- 一些问题：
+  - 不同类型的前端IR太多，PASS也不同
+  - 不同层的IR互相不可见
+- **MLIR希望对格式进行规范，作为编译器的基础设施，将编译流程中各个层级的IR进行统一表示**
+
+### Overview
+
 MLIR: **一个“可以同时存在多种 IR，并且明确描述 lowering 路径”的 IR 框架**
+
+<img src="assets/image-20260129142413832.png" alt="image-20260129142413832" style="zoom:67%;" />
 
 MLIR的三个核心设计思想：
 
-- **IR 是可扩展的（Dialect）**: 无需等LLVM官方支持你的算子
+- **IR 是可扩展的（Dialect）**: 方言系统，无需等LLVM官方支持你的算子
 
   - 定义自己的 Dialect
   - 定义自己的 Op
@@ -191,3 +215,116 @@ MLIR的三个核心设计思想：
 | Operation | 指令 / 算子 |
 | Region    | 函数体      |
 | Block     | 基本块      |
+
+- 其中较为重要的是Operation，举例来说：
+
+```
+module {
+  func.func @add(%a: i32, %b: i32) -> i32 {
+    %0 = arith.addi %a, %b : i32
+    return %0 : i32
+  }
+}
+```
+
+- 这里的`func.func/arith.addi/return`都是一个op
+
+### Dialect
+
+- Dialect: 一组语义一致的 Operation + Type + Attribute (?)
+
+  <img src="assets/image-20260129152553154.png" alt="image-20260129152553154" style="zoom:67%;" />
+
+  ![image-20260129150132688](assets/image-20260129150132688.png)
+
+  - Dialect是**“承载转换结果的语言层”**，决定了Frontend 用什么“MLIR 语言”来表达 AST 的语义
+  - 可以认为是一套词汇+语法规则
+  - Dialect **完全是人为设计的**，可以被新建，扩展，修改
+
+  | Dialect 类型          | 谁写的         | 能不能改    |
+  | --------------------- | -------------- | ----------- |
+  | MLIR 官方             | LLVM 社区      | ❌（不建议） |
+  | 框架 Dialect（Torch） | PyTorch / 社区 | ⚠️ 可扩展    |
+  | 项目 Dialect          | 编译器作者     | ✅ 强烈建议  |
+  | 硬件 Dialect          | 芯片厂商       | ✅ 必须改    |
+
+- 需要注意的是**Dialect不负责执行**，它只会：
+
+  - 声明：**具体语义**
+  - 说明：输入输出是 tensor / memref
+  - 规定：形状、类型、约束关系
+
+- **其和IR的关系**
+
+  ```
+  MLIR
+   ├── Dialect A (linalg)
+   │     ├── linalg.matmul
+   │     ├── linalg.conv
+   │
+   ├── Dialect B (tensor)
+   │     ├── tensor.extract
+   │
+   ├── Dialect C (arith)
+   │     ├── arith.addi
+  ```
+
+- **Dialect 和“执行”到底隔了什么**
+
+  ```
+  Dialect Op
+     ↓ (lowering pass)
+  Lower Dialect Op
+     ↓
+  LLVM IR
+     ↓
+  机器指令 / kernel 调用
+     ↓
+  硬件执行
+  ```
+
+- 例如：
+
+  - `arith`：基础算术
+  - `linalg`：张量计算
+  - `scf`：结构化控制流
+  - `llvm`：LLVM 指令
+
+- 补充:**TableGen 是 LLVM / MLIR 用来“声明式生成代码”的工具**
+
+  - **ODS(Operation Definition Specification)：**
+    - ODS 是基于 TableGen 的一套规范，用来“声明式定义 MLIR Operation”
+    - 它会 **自动生成**：Op 的 C++ 类、Builder / verifier、parser / printer....
+
+  - **DRR（Declarative Rewrite Rules）**
+    - DRR 是 MLIR 的声明式重写规则框架，用来写 pattern rewrite / lowering。
+    - 它会生成：RewritePattern C++ 类、match / rewrite 逻辑、PatternRewriter glue
+
+
+### Rewrite Pattern
+
+**Pattern = 用 A 替换 B，语义等价**
+
+类似于LLVM Pass,但更为直观
+
+```
+-optimize-linalg
+-lower-to-scf
+-lower-to-llvm
+```
+
+### Lowering
+
+- **从一个dialect到另一个dialect的抽象**
+- 上层做语义级优化，下层做硬件级映射
+- 有两种Modes:
+  - Partial: 部分operations转换成目标dialect (可以获取之前的信息)
+  - full: 所有operations转换成目标dialect
+
+<img src="assets/image-20260129171902678.png" alt="image-20260129171902678" style="zoom: 50%;" />
+
+
+
+**Dialect体系总结：**
+
+<img src="assets/image-20260129173642448.png" alt="image-20260129173642448" style="zoom: 50%;" />
