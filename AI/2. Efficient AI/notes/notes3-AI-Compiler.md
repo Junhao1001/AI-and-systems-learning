@@ -154,7 +154,191 @@ for i in N:
 - **Hardware Mapping（硬件映射）**
 - **Auto-Tuning（自动搜索）**
 
-## 2. MLIR
+## 2. 常用AI Compiler调研
+
+### Some concepts
+
+- 静态图：在运行前，整个计算图是已知的
+  - 图结构固定
+  - shape 多为固定
+  - 编译一次，多次执行
+- 动态图：计算图在运行时“边跑边生成”
+  - Python 控制流
+  - shape 可变
+  - 灵活但难优化
+- 自用IR: 只服务于一个特定 compiler / 公司 / 系统的 IR， 不打算被别人复用或扩展
+- 通用IR: 
+  - 让“不同团队 / 不同工具”共用
+  - 作为长期基础设施
+  - 明确语义、稳定接口
+
+### Overview
+
+主流图（Chatgpt提供）
+
+```
+┌───────────────┬─────────────────────────────┐
+│ 框架生态       │ AI Compiler                │
+├───────────────┼─────────────────────────────┤
+│ PyTorch       │ TorchInductor / XLA         │
+│ TensorFlow    │ XLA                         │
+│ 通用 / 学术    │ TVM                        │
+│ LLVM / MLIR   │ MLIR-based compilers        │
+│ NVIDIA        │ TensorRT                   │
+│ Intel         │ OpenVINO                   │
+│ 移动端        │ MNN / TFLite / NNAPI        │
+│ 新兴          │ IREE                       │
+└───────────────┴─────────────────────────────┘
+```
+
+根据使用**场景分类**：
+
+- **训练**：TorchInductor / XLA
+  - 编译器的目标是加速forward + backward
+  - 优化算子融合、调度
+- **推理部署**：TensorRT / OpenVINO / TFLite
+- **长期平台/新硬件**：MLIR/TVM
+  - 长期平台指：一个会持续演进、不断接新模型 / 新硬件 / 新算子的编译平台
+- 长期平台和移动端的区别：
+
+| 对比维度   | 长期平台    | 移动端         |
+| ---------- | ----------- | -------------- |
+| 生命周期   | 很长        | 跟随产品       |
+| 灵活性     | 高          | 低             |
+| 算子扩展   | 经常        | 少             |
+| 编译器定制 | 深          | 浅             |
+| 技术栈     | MLIR / LLVM | TFLite / NNAPI |
+
+
+
+根据对应的**硬件平台**（初步）：
+
+| 硬件            | 首选                     |
+| --------------- | ------------------------ |
+| NVIDIA GPU      | TensorRT / TorchInductor |
+| TPU             | XLA                      |
+| Intel CPU / GPU | OpenVINO                 |
+| 手机 SoC        | TFLite / NNAPI / MNN     |
+| 自研 NPU        | MLIR / TVM               |
+
+
+
+考虑**模型和算子特征**：
+
+| 情况         | 更合适         |
+| ------------ | -------------- |
+| 标准模型     | TensorRT / XLA |
+| 自定义算子多 | MLIR / TVM     |
+| 算子层控制强 | MLIR           |
+| 算子调度搜索 | TVM            |
+
+
+
+**黑盒和白盒**：
+
+- 黑盒编译器：
+  - 看不到 / 改不了：
+    - IR 结构
+    - Pass pipeline
+    - 算子 lowering 逻辑
+  - 但是性能很好，接口简单，可定制性较低
+  - 例如：TorchInductor、XLA、TensorRT、OpenVINO、TFLite、MNN
+
+### 具体AI Compiler
+
+#### XLA (Google)
+
+- TensorFlow 官方后端, 现在也支持 PyTorch（torch-xla）
+- 特点:
+  - **计算图级别编译**
+  - 强调 **Whole-Graph Optimization**
+  - 强项：TPU、GPU
+- 偏 **数学图优化**
+- 对算子语义控制强，但 IR 不太灵活
+- 主要用途：
+  - TPU
+  - TensorFlow 训练 / 推理
+  - 大规模数据中心
+
+#### TorchInductor（PyTorch）
+
+- PyTorch 2.x 默认 compiler
+
+- Dynamo + AOTAutograd + Inductor
+
+- 特点：
+
+  - **以 Python 前端为核心**
+  - JIT / AOT 混合
+
+  - **动态图友好**
+  - 更像是**框架内编译器**
+
+- 主要用途：
+
+  - PyTorch 模型加速
+  - GPU / CPU
+  - 研究 & 工业训练
+
+#### TVM
+
+- 学术 + 工业影响力都很大的 **通用 AI Compiler**
+- 框架无关、硬件无关（理想上）
+- 特点：
+  - 算子级 + 调度级分离
+  - Auto-tuning（AutoTVM / Ansor）
+  - 自有 IR（Relay / TIR）
+  - **非常偏“编译器 + 搜索”**
+  - 可定制性极强
+- 主要用途：
+  - 新硬件 bring-up
+  - NPU / ASIC
+  - 学术研究
+
+#### MLIR-based Compilers（生态)
+
+- 是 **一整套构建 AI Compiler 的基础设施**
+- 包含：
+  - IREE
+  - TensorFlow MLIR
+  - Torch-MLIR
+  - 各大厂内部编译器
+- 特点：
+  - 多层 IR（Dialect）
+  - 强表达能力
+  - 非常适合异构硬件
+- 主要用途：
+  - AI Compiler 基础设施
+  - NPU / GPU / DSP
+  - 长期项目
+
+#### **移动端（MNN / TFLite / NNAPI）**
+
+- **特点**：极度强调：
+
+  - 内存
+
+  - 功耗
+
+  - 启动延迟
+
+- 差异
+
+  - 算子集合受限
+
+  - 图结构简化
+
+  - 强依赖系统 API
+
+- 用途
+
+  - 手机
+
+  - IoT
+
+  - 边缘推理
+
+## 3. MLIR
 
 MLIR入门讲解：https://www.bilibili.com/video/BV1Hd4y1U7mb/?spm_id_from=333.337.search-card.all.click&vd_source=47b9e94682446eba3bcd8ada1d947692 
 
@@ -328,3 +512,4 @@ module {
 **Dialect体系总结：**
 
 <img src="assets/image-20260129173642448.png" alt="image-20260129173642448" style="zoom: 50%;" />
+
