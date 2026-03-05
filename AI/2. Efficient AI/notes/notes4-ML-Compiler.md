@@ -62,7 +62,7 @@
 - Abstraction and Implementation:
 
   - **Abstraction**: 抽象是指以不同方式表示同一张量函数(tensor function)
-  - **Implementation**: 在实践中，更专业的版本是高层抽象的实现
+  - **Implementation**: 张量函数的具体实现（相对而言）
 
   - 因此大多数MLC过程可视为**在相同或不同抽象下转换和组装张量函数的过程**
 
@@ -74,7 +74,7 @@
 
 <img src="assets/image-20260205113003802.png" alt="image-20260205113003802" style="zoom:50%;" />
 
-1. 
+
 
 ## 2. Common AI Compilers
 
@@ -130,19 +130,19 @@ Apache TVM 是一个机器学习编译框架，**遵循Python 优先开发和通
 三者都是移动端的**通用高效推理引擎**
 
 - TensorFlow Lite (TFLite): 谷歌发布的高效的移动深度学习框架  (Google, 2017)。**TF-Lite 针对性能较弱的设备（如移动电话和嵌入式设备）进行了优化**
-- 对于 Android 智能手机，Google 也提供了自己的设备推理解决方案，即 ML-kit 和神经网络 API (NNAPI) (Google，2016)
-- 这里主要针对MNN来概括
+- 对于 Android 智能手机，Google 提供了自己的设备推理解决方案，即 ML-kit 和神经网络 API (NNAPI) (Google，2016)
+- 这一章节主要针对**MNN**来概括：MNN是一个轻量级的深度神经网络引擎，支持深度学习的推理与训练
 
 #### 2.2.1 MNN Features
 
 - 轻量性
-- 通用性
+- **通用性：**
   - 支持 Tensorflow、Caffe、ONNX、Torchscripts 等主流模型文件格式，支持CNN / RNN / GAN / Transformer 等主流网络结构。
   - 支持多输入多输出，支持任意维度的输入输出，支持动态输入（输入大小可变），支持带控制流的模型
   - 算子丰富，支持 178 个Tensorflow Op、52个 Caffe Op、163个 Torchscipts Op、158 个 ONNX Op（ONNX 基本完整支持）
   - 支持 服务器 / 个人电脑 / 手机 及具有POSIX接口的嵌入式设备，支持使用设备的 CPU / GPU 计算，支持部分设备的 NPU 计算（IOS 11 + CoreML / Huawei + HIAI / Android + NNAPI）
   - 支持 Windows / iOS 8.0+ / Android 4.3+ / Linux  及具有POSIX接口的操作系统
-- 高性能：
+- **高性能：**
   - 对iOS / Android / PC / Server 的CPU架构进行了适配，编写SIMD代码或手写汇编以实现核心运算，充分发挥 CPU的算力，单线程下运行常见CV模型接近设备算力峰值
   - 支持基于 Metal / OpenCL / Vulkan 使用移动端设备上的GPU进行推理
   - 支持基于 CUDA 使用 PC / Server 上的 NVIDIA GPU 实现更快速的推理
@@ -152,22 +152,22 @@ Apache TVM 是一个机器学习编译框架，**遵循Python 优先开发和通
 
 MNN提出了三种核心创新（不完全展开）：
 
-- 运行时半自动搜索架构
+- **运行时半自动搜索架构**
   - TVM 为代表的的全自动搜索（i.e. 自动调优)
   - NCNN 为代表的全手动搜索（i.e. 手工实现每个 case）
   - **MNN 提出了一个特殊的处理过程，称为「预推理」。预推理过程中，会提前进行算子的计算策略选择和资源分配**
-- 卷积算法优化创新
-- 异构设备混合调度
+- **卷积算法优化创新**
+- **异构设备混合调度**
 
 #### 2.2.2 Differences between AI Compiler and Inference Engine ？
 
-(这个问题还是基于chatgpt，对于推理引擎的理解还比较浅)
+(这个问题还是基于chatgpt，个人对于推理引擎的理解还比较浅)
 
 MNN:
 
 - MNN也支持一些编译器做的事情：图优化、算子融合、多硬件支持
 - **不支持IR分层**
-- 不支持自动调度搜索（但是提出了半自动搜索架构，但是支持的算子仍然有限）
+- 不支持自动调度搜索（MNN提出了半自动搜索架构，但是支持的算子仍然有限）
 - **不是通用 compiler infrastructure**：不能拿去支持“任意新硬件”
 
 推理框架做的事（AI提供，不确定准确性）
@@ -200,11 +200,12 @@ Codegen
 真正的高效 kernel
 ```
 
-- 给出算子描述，通过schedule和lowering，生成kernel。**kernel是结果而不是输入**
+- 换句话说推理框架仍需要人提前针对硬件和模型，手写一些算子，然后再推理中直接调用
+- AI Compiler根据算子描述，通过schedule和lowering，生成kernel。**kernel是结果而不是输入**
 
 但对于我们的目标来说，“模型在端侧平台的快速部署”，是否可以选择这种推理引擎：
 
-- MNN也支持多种硬件，也许够我们用了？
+- MNN支持的算子也不少，应该也支持不同硬件异构实现，也许够我们用了？
 - 半自动推理的自动化究竟有多高？手写算子的需求究竟如何？需要进一步探究
 
 ### 2.3 CoreML
@@ -229,7 +230,117 @@ Core ML 是苹果推出的机器学习框架，支持在 iOS、macOS、watchOS �
 - Core ML 不支持自定义算子、改 lowering 规则、接受新硬件
 - 简单来说，Core ML 是工业闭源实现，适合产品开发者
 
+### 2.4 MLIR
 
+准确地说MLIR并不是一种AI Compiler，而是**一整套构建 AI Compiler 的基础设施**
+
+其开发的核心目的：**弥补框架和底层硬件之间的gap，连通上层框架和下层硬件**
+
+MLIR提供的解决方案是：**Dialect，DialectConversion**
+
+<img src="assets/v2-2526b774de1b4508d8d07042ad0d9df0_1440w.webp" alt="img" style="zoom:80%;" />
+
+MLIR对比起来和LLVM更为相像：
+
+- 可以理解为MLIR希望开发一种通用的IR表示，可以连接不同的框架和硬件
+- 核心是Dialect，个人理解是一套**“词汇+语法规则”**；不同层级有不同的Dialect
+  - 例如TVM有graph IR，TensorIR
+  - MLIR可以为最上层框架设计一个Dialect A，为graph IR层设计一个Dialect B, Tensor IR设计一个Dialect C，硬件层有Dialect D;
+  - 不同层Dialect之间可以进行DialectConversion(或者理解为lowering)
+  - 从而实现逐层的“编译”；
+  - Dialect完全是人为设计的，可以被新建，扩展和修改
+- 对于我们来说，如果要使用这套框架，要先基于MLIR设计一个MLIR-based Compiler（或者找一下有没有现成的），再将其应用到具体模型部署中，似乎有点过于复杂？
+
+### 2.5 XLA
+
+XLA的全称是Accelerated Linear Algebra，即加速线性代数, 是一种深度学习编译器。
+
+- XLA是**TensorFlow生态专用**的AI Compiler
+- XLA更多是**图级的整体编译器**： XLA负责对Tensorflow前端定义的计算图进行优化：将图转化为 XLA 高级优化器 (XLA HLO) 表示，然后再转换成LLVM IR等更底层表示
+
+XLA的一些概念：
+
+- **HLO(High-Level Optimizer IR)**: XLA自己的一套IR。XLA的优化流程可以分成两方面，目标无关优化和目标相关优化。优化期间传递的就是HLO.
+
+  <img src="assets/v2-27c5726f7840f1bed7c930e15c32d7cf_1440w.jpg" alt="img" style="zoom:67%;" />
+
+- **即时编译（JIT，Just-In-Time）**
+
+- **超前编译（AOT，Ahead-Of-Time）**: 这两个似乎是XLA功能的主要体现，我没有深入研究
+
+由于XLA生态绑定了TF，所以似乎并不适合我们的项目
+
+## 3. Personal thinking
+
+Q1: 我们的目标是什么？最终要做什么？
+
+- 研发一个”长期平台“， 实现“**不同模型 × 不同硬件 × 快速部署”**
+
+- 其实就是解决模型端和硬件端的**”算子不匹配问题“**
+
+- 在已知硬件上，更换模型出现不支持的算子怎么处理？
+- 相同模型部署到一个新的硬件芯片上，又该怎么处理（这个也许更复杂一些，除了算子支持问题，还要考虑端侧runtime问题）
+- **“快”**或者说**“自动化”**，应该不是希望每次手写一些新算子来实现上述的部署目标。（提前写算子，或许也是条路？）
+
+
+
+Q2：当前了解来看，TVM框架似乎是一个比较适合我们的方案
+
+- TVM前端兼容多种深度学习框架（TensorFlow/Pytorch/...)，也支持多种Backend(LLVM/CUDA/OpenCL/Vulkan.....)
+- TVM如何处理新算子
+  - **Graph Partition**: 以NPU为例，TVM可以将图分为NPU子图和CPU子图（负责NPU不支持的算子），然后再runtime**调度异构执行**
+  - **Schedule/autotune**: 通过写通用schedule和lowering规则，可以让TVM生成一个通用Kernel
+    - 不是自己写算子
+    - schedule类似于告诉系统是否tile/vectorize/parallel，TVM自动帮你写kernel（类似与LLVM中的PASS?)
+    - 应该比手写算子轻松，而且主要应该还是走另外两个方式来解决
+  - **BYOC(bring your own codegen)**: TVM可以使用BYOC来调用外部的库或者框架（cuDNN/TensorRT/厂商提供的SDK)
+
+- 为啥我觉得TVM也许适合我们：移动端的NPU支持的算子各不相同，CPU总是那几个架构，TVM保证模型能通过(LLVM->CPU)这条路在端侧跑起来，性能再说？
+- TVM的缺点：
+  - 据说早期的TVM框架对Dynamic Shapes的支持很弱，但是最近几年社区在开发的Relax一直在迭代这方面，具体的不是很清楚
+- 还有个优点：学起来比较方便，陈天奇的MLC课程基本是基于TVM的，虽然是22年的。TVM社区好像维护得也还不错
+
+
+
+Q3：MNN/TFLite/NCNN
+
+- 因为泽芳的调研报告里提到了MNN，以及王老师之前提到了NCNN，稍微多看了眼
+- 这个在很多资料里定义为**“轻量级推理框架”**，而非AI Compiler，我的理解如下：
+  - 它们确实做了一些AI编译器做的事，例如图级/内存管理的优化，对多种硬件平台和加速库的支持；
+  - 我认为对于一些常规的模型和常见的硬件平台，这绝对满足我们实验室对**“端侧部署”**的要求
+  - 而且性能大概率比TVM做出来的端侧版本更好
+- 问题就在于其**支持的算子是有限的**（虽然官方说可扩展）
+  - 以MNN为例，其支持的算子就是100多个，模型如果用了这个框架，如果有不支持的算子，不做算子拆分的话，就是直接无法运行（我的理解）
+  - 其新增算子，更像是对框架内部进行改动，而不是新加一个“个人库”的感觉。更适合厂商或者框架维护的团队。
+- 对于我们来说，可以用TVM做保底版本（保证模型跑起来）；用MNN来做性能对比或者性能更优版本
+
+
+
+Q4：针对移动端部署，我有个问题，目前ncnn，高通，CoreML是如何解决的，他们使用了ai compilers吗，如果我们采用llvm的路线，可行性有多大（王老师微信问题）
+
+- CoreML可以认为是**“苹果自研 AI Compiler”**+与**”苹果绑定的Runtime“**
+- NCNN前面提到了
+- 高通我的理解是芯片厂商，更多对应AI Compiler层级中的backend层级。也许会提供一套相关的SDK（提供算子库），TVM框架可以通过BYOC来接入，然后再将不支持的算子映射到CPU上（我当前的理解）
+- LLVM路线：如前面所说，LLVM基本对应到CPU（好像也可以对应部分GPU），如果将整个模型都用端侧CPU来运行，我不确定能不能吃得住。但是如前面所说，以厂商NPU为主力，其他fallback到CPU，我觉得应该可以（当前理解）
+
+
+
+Q5:我们的大目标是把多模态大模型通过ai compiler放到移动端设备上。项目的角色分配如何？
+
+- 之前我的想法：
+
+  - 顶层：上层模型负责人负责模型结构、Pruning、优化等
+  - 中层：AI complier 负责人Operator Fusion、Quantization、Layout
+  - 底层：LLVM/Kernel 负责人负责性能优化：使用LLVM进行自动优化、或手写kernel了解移动端的环境，设计时考虑和移动端的连接
+  - 移动端：集成前面的编译产物，确保移动端runtime一些简单的“产品”设计、输入输出处理
+
+- 当时的我认为，算子的优化都需要我们手动一步步来实现，包括图的优化，算子本身的优化
+
+- 现在来看，似乎并不用，AI Compiler会帮你完成大部分的优化工作。手写算子应该是极少数的，而且移动端的芯片厂商看起来并不会希望我们自己在对应的NPU上实现算子，所以我们最多也只是通过LLVM backend在CPU上实现。那么不如直接使用前面提到TVM框架的schdule/Lowering方案
+
+- 也许底层可以合并到中层或者移动端方面
+
+  
 
 ## 3. Tensor Program
 
@@ -240,7 +351,7 @@ Core ML 是苹果推出的机器学习框架，支持在 iOS、macOS、watchOS �
   - 许多不同的抽象能够实现同样的元张量函数
   - 许多机器学习编译过程中，会将元张量函数变为**更加专门的、针对特定工作和部署环境的函数**
 
-  <img src="assets/image-20260203155848348.png" alt="image-20260203155848348" style="zoom:50%;" />
+  <img src="assets/image-20260203155848348-1770381798492-1.png" alt="image-20260203155848348" style="zoom:50%;" />
 
 - 简单提及一些**算子内部优化**的例子
 
@@ -258,7 +369,7 @@ Tensor Program 更关注于循环的优化和数据的排布
 - 驱动张量计算的循环嵌套（Loop nests）
 - 计算部分本身的语句（Computations)
 
-<img src="assets/image-20260203162901340.png" alt="image-20260203162901340" style="zoom:50%;" />
+<img src="assets/image-20260203162901340-1770381798493-2.png" alt="image-20260203162901340" style="zoom:50%;" />
 
 为什么要写成特定形式的张量程序？为什么不直接用C语言/Cuda去实现呢？
 
@@ -266,11 +377,7 @@ Tensor Program 更关注于循环的优化和数据的排布
 - 可以应用一些**Program-based transformation**,用于加速张量程序的执行
 - 张量程序中额外的结构能够为程序变换提供更多的信息（如上图中的spatial）
 
-loop optimization三板斧（）：
 
-1. Fusion
-2. Tiling
-3. vectorization
 
 ## Reference
 
@@ -295,5 +402,9 @@ loop optimization三板斧（）：
 10. [AI编译器和推理引擎的区别](https://bbs.huaweicloud.com/blogs/398747)
 
 11. [MNN: A UNIVERSAL AND EFFICIENT INFERENCE ENGINE将模型适配到各种终端硬件的解决方案，加速，量化，保精度](https://blog.csdn.net/weixin_43424450/article/details/144449776)
+
+12. [MLIR入门理解1](https://zhuanlan.zhihu.com/p/450022851)
+
+13. [一文带你从零认识什么是XLA](https://zhuanlan.zhihu.com/p/445994865)
 
     

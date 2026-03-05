@@ -1196,3 +1196,30 @@ $$
 - 扩维后，参数更多，非线性更强
 - 后续再降维回到`hidden_state`
 
+### 6.3 Qwen3RotaryEmbedding(待学)
+
+## 7. Others
+
+#### Why Pre-Norm
+
+**Post- Norm数学形式**：
+$$
+x_{l+1} = \text{LN}(x_l + \text{Attn}(x_l))
+$$
+
+- 梯度 **必须经过 LayerNorm**
+
+  而 LayerNorm：
+
+  - 含有均值、方差
+  - 梯度是 **耦合的**
+  - 深层时非常不稳定
+
+**Pre-Nrom 数学形式**：
+$$
+x_{l+1} = x_l + \text{Attn}(\text{LN}(x_l))
+$$
+
+- LN 只作用在 **分支**
+- Residual 路径保持“纯线性”
+- 梯度可以 **直接从高层流回底层**
